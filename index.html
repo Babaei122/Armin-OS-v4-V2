@@ -2434,7 +2434,7 @@
                   <span class="card-icon">💎</span>
                   <div>
                     <h3 class="card-title">دارایی‌های دیجیتال</h3>
-                    <div class="card-subtitle">نمای کلی ارزش کریپتو (نمایشی)</div>
+                    <div class="card-subtitle">نمای کلی ارزش کریپتو (بر اساس دارایی‌های ثبت‌شده)</div>
                   </div>
                 </div>
                 <span class="badge">Crypto</span>
@@ -4600,9 +4600,10 @@
   let cryptoPricesLoading = false;
 
   const openHoldingDialog = (h=null) => {
-    editingHoldingId = h ? h.id : null;
-    $("#dlgHoldingTitle").textContent = h ? "ویرایش دارایی" : "افزودن دارایی";
-    $("#btnHoldingDelete").style.visibility = h ? "visible" : "hidden";
+    const isEditing = !!(h && h.id);
+    editingHoldingId = isEditing ? h.id : null;
+    $("#dlgHoldingTitle").textContent = isEditing ? "ویرایش دارایی" : "افزودن دارایی";
+    $("#btnHoldingDelete").style.visibility = isEditing ? "visible" : "hidden";
 
     $("#holdType").value = h ? h.type : "طلا";
     $("#holdUnit").value = h ? h.unit : "تومان";
@@ -4635,6 +4636,63 @@
   const cryptoPercentLabel = (value) => {
     const sign = value > 0 ? "+" : "";
     return toEnglishDigits(`${sign}${value.toFixed(1)}`);
+  };
+
+  const CRYPTO_MARKET = {
+    BTC: { name: "Bitcoin", icon: "₿", priceToman: 6200000000, changePct: 2.1 },
+    ETH: { name: "Ethereum", icon: "Ξ", priceToman: 215000000, changePct: -1.4 },
+    SOL: { name: "Solana", icon: "◎", priceToman: 9800000, changePct: 5.0 },
+    XRP: { name: "Ripple", icon: "✕", priceToman: 210000, changePct: -0.6 },
+    DOGE: { name: "Dogecoin", icon: "Ð", priceToman: 28000, changePct: 1.7 },
+    USDT: { name: "Tether", icon: "₮", priceToman: 87000, changePct: 0 }
+  };
+
+  const nowFaTime = () => toEnglishDigits(new Date().toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" }));
+  const findCryptoSymbol = (text) => {
+    const t = String(text || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!t) return "";
+    if (CRYPTO_MARKET[t]) return t;
+    const keys = Object.keys(CRYPTO_MARKET);
+    return keys.find((k) => t.includes(k)) || "";
+  };
+
+  const syncCryptoFromHoldings = () => {
+    const holdings = Array.isArray(state.assets.holdings) ? state.assets.holdings : [];
+    const grouped = new Map();
+
+    holdings.forEach((h) => {
+      const symbol = findCryptoSymbol(`${h.type} ${h.unit}`);
+      if (!symbol) return;
+      const amount = Number(h.amount || 0);
+      if (!Number.isFinite(amount) || amount <= 0) return;
+      grouped.set(symbol, (grouped.get(symbol) || 0) + amount);
+    });
+
+    const items = Array.from(grouped.entries()).map(([symbol, amount]) => {
+      const market = CRYPTO_MARKET[symbol] || { name: symbol, icon: "●", priceToman: 0, changePct: 0 };
+      return {
+        id: symbol.toLowerCase(),
+        name: market.name,
+        symbol,
+        icon: market.icon,
+        amount: Number(amount.toFixed(8)),
+        value: Math.round(amount * Number(market.priceToman || 0)),
+        changePct: Number(market.changePct || 0)
+      };
+    });
+
+    const totalValue = items.reduce((sum, item) => sum + Number(item.value || 0), 0);
+    const weightedChange = totalValue > 0
+      ? items.reduce((sum, item) => sum + ((item.value / totalValue) * item.changePct), 0)
+      : 0;
+
+    state.assets.crypto = {
+      loading: false,
+      totalValue,
+      changePct: Number(weightedChange.toFixed(1)),
+      updatedAt: nowFaTime(),
+      items
+    };
   };
 
   const renderCryptoAssets = () => {
@@ -4690,10 +4748,12 @@
             <div class="empty-title">هنوز دارایی دیجیتال اضافه نکردی</div>
           </div>
           <div class="empty-actions">
-            <button class="btn btn-secondary" type="button">＋ افزودن دارایی</button>
+            <button class="btn btn-secondary" type="button" id="btnCryptoQuickAdd">＋ افزودن دارایی</button>
           </div>
         </div>
       `;
+      const quickAddBtn = $("#btnCryptoQuickAdd", contentEl);
+      if (quickAddBtn) quickAddBtn.addEventListener("click", () => openHoldingDialog({ type: "BTC", unit: "BTC", amount: "" }));
       return;
     }
 
@@ -4760,7 +4820,12 @@
     applyEnglishDigits();
   };
 
-  const renderFinance = () => { renderHoldings(); renderCryptoAssets(); renderFinancePlan(); };
+  const renderFinance = () => {
+    syncCryptoFromHoldings();
+    renderHoldings();
+    renderCryptoAssets();
+    renderFinancePlan();
+  };
 
   $("#btnAddHolding").addEventListener("click", () => { showView("finance"); openHoldingDialog(null); });
   $("#btnAddHolding2").addEventListener("click", () => openHoldingDialog(null));
